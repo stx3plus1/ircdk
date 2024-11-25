@@ -7,6 +7,7 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <arpa/inet.h>
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -25,7 +26,16 @@ int main(int ac, char** av) {
     char in_buffer[512];
     char out_buffer[512];
     struct hostent* hostent;
+    struct winsize ws;
     struct sockaddr_in sockaddr_in;
+
+    // Get terminal size for TUI
+    ioctl(0, TIOCGWINSZ, &ws);
+    int w = ws.ws_col;
+    int h = ws.ws_row;
+
+    char* display_buffer[h - 1];
+    display_buffer[h - 2] = "Welcome to ircdk! Connecting to server...\n";
 
     // Connect socket to IRC server
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -34,7 +44,10 @@ int main(int ac, char** av) {
     sockaddr_in.sin_addr.s_addr = in_addr;
     sockaddr_in.sin_family = AF_INET;
     sockaddr_in.sin_port = htons(atoi(av[2]));
-    if (connect(sockfd, (struct sockaddr*)&sockaddr_in, sizeof(sockaddr_in))) return 3;
+    if (connect(sockfd, (struct sockaddr*)&sockaddr_in, sizeof(sockaddr_in))) {
+        perror("connection failure\n");
+        return 1;
+    }
 
     // Initiate our IRC connection
     memset(out_buffer, 0, sizeof(out_buffer));
@@ -63,7 +76,7 @@ int main(int ac, char** av) {
                 send(sockfd, pong, strlen(pong), 0);
                 free(pong);
             } else {
-                write(1, in_buffer, i);
+                if (write(1, in_buffer, i));
             }
             memset(in_buffer, 0, sizeof(in_buffer));
         }
@@ -71,13 +84,13 @@ int main(int ac, char** av) {
         // parent - handles sending messages
         while (1) {
             memset(out_buffer, 0, sizeof(out_buffer));
-            fgets(out_buffer, sizeof(out_buffer), stdin);
+            if (fgets(out_buffer, sizeof(out_buffer), stdin)) perror("temporary failure getting input\n");;
             if (out_buffer[0] == '/') {
                 out_buffer[0] = ' ';
             } else {
                 if (joined_channel) {
-                    char tmp_out[512];
-                    memcpy(tmp_out, out_buffer, sizeof(out_buffer));
+                    char tmp_out[494];
+                    memcpy(tmp_out, out_buffer, sizeof(tmp_out));
                     snprintf(out_buffer, sizeof(out_buffer), "PRIVMSG %s :%s", "#general", tmp_out);
                 } else {
                     printf("Join a channel to chat. To run commands, prefix / to the command.\n");
