@@ -13,6 +13,12 @@
 #include <netinet/in.h>
 
 #define VERSION 1.0
+#define buf_size 512
+
+typedef struct {
+    int alive, joined_channel;
+    char channel[51];
+} config;
 
 int main(int ac, char** av) {
     // Help message
@@ -23,8 +29,8 @@ int main(int ac, char** av) {
 
     // Idk stuff
     char* host = av[1];
-    char in_buffer[512];
-    char out_buffer[512];
+    char in_buffer[buf_size];
+    char out_buffer[buf_size + 64];
     struct hostent* hostent;
     struct winsize ws;
     struct sockaddr_in sockaddr_in;
@@ -36,6 +42,7 @@ int main(int ac, char** av) {
 
     char* display_buffer[h - 1];
     display_buffer[h - 2] = "Welcome to ircdk! Connecting to server...\n";
+    printf("%s", display_buffer[h - 2]);
 
     // Connect socket to IRC server
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -45,7 +52,7 @@ int main(int ac, char** av) {
     sockaddr_in.sin_family = AF_INET;
     sockaddr_in.sin_port = htons(atoi(av[2]));
     if (connect(sockfd, (struct sockaddr*)&sockaddr_in, sizeof(sockaddr_in))) {
-        perror("connection failure\n");
+        perror("connect()");
         return 1;
     }
 
@@ -55,9 +62,11 @@ int main(int ac, char** av) {
     send(sockfd, out_buffer, strlen(out_buffer), 0);
 
     // shared memory.
-    int* joined_channel;
-    int shm = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0666);
-    joined_channel = (int*)shmat(shm, NULL, 0);
+    config* conf;
+    int shm = shmget(IPC_PRIVATE, sizeof(config), IPC_CREAT | 0666);
+    conf = (config*)shmat(shm, NULL, 0);
+    conf->alive = 1;
+    conf->joined_channel = 0;
 
     // Start handling the now active IRC connection
     pid_t p = fork();
@@ -66,7 +75,12 @@ int main(int ac, char** av) {
         int i;
         while ((i = read(sockfd, in_buffer, sizeof(in_buffer))) > 0) {
             // message sending without a prefix
-            if (strstr(in_buffer, "End of /NAMES list.")) *joined_channel = 1;
+            if (strstr(in_buffer, "JOIN :")) {
+                conf->joined_channel = 1;
+                char* tok = strtok(in_buffer, "JOIN :");
+                tok = strtok(NULL, "JOIN :");
+                strncpy(conf->channel, tok, strlen(tok) - 1);
+            }
             // auto pong when server sends a PING, also hides PING request
             if (strstr(in_buffer, "PING")) {
                 char* tok = strtok(in_buffer, " ");
@@ -80,19 +94,22 @@ int main(int ac, char** av) {
             }
             memset(in_buffer, 0, sizeof(in_buffer));
         }
+        conf->alive = 0;
+        printf("IRC connection closed. Press enter to exit.\n");
     } else {
         // parent - handles sending messages
         while (1) {
             memset(out_buffer, 0, sizeof(out_buffer));
-            if (fgets(out_buffer, sizeof(out_buffer), stdin)) perror("temporary failure getting input\n");;
+            if (fgets(out_buffer, sizeof(out_buffer), stdin) == NULL) perror("fgets()");
             if (out_buffer[0] == '/') {
                 out_buffer[0] = ' ';
             } else {
-                if (joined_channel) {
-                    char tmp_out[494];
+                if (conf->joined_channel) {
+                    char tmp_out[buf_size];
                     memcpy(tmp_out, out_buffer, sizeof(tmp_out));
-                    snprintf(out_buffer, sizeof(out_buffer), "PRIVMSG %s :%s", "#general", tmp_out);
+                    snprintf(out_buffer, sizeof(out_buffer), "PRIVMSG %s :%s", conf->channel, tmp_out);
                 } else {
+                    if (conf->alive == 0) break;
                     printf("Join a channel to chat. To run commands, prefix / to the command.\n");
                     continue;
                 }
@@ -103,8 +120,7 @@ int main(int ac, char** av) {
         }
     }
     if (sockfd) close(sockfd);
-    shmdt(joined_channel);
+    shmdt(conf);
     shmctl(shm, IPC_RMID, NULL);
-    printf("IRC connection closed, exiting\n");
     return 0;
 }
