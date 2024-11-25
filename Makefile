@@ -1,4 +1,4 @@
-# socket
+# ircdk
 # by stx3plus1
 
 SRC=src
@@ -7,15 +7,15 @@ SOURCE=$(wildcard src/*.c)
 COMMIT="\"$(shell git rev-parse HEAD | head -c6)\""
 CFLAGS=-O3 -std=c2x -Dcommit=$(COMMIT) 
 
-.PHONY: socket
+.PHONY: ircdk
 
-socket: ${SOURCE}
+ircdk: ${SOURCE}
 	@echo "[$(CC)] $^ -> $@"
 	@$(CC) -o $@ $^ $(CFLAGS)
 	@strip $@
 
 # run install with sudo/doas.
-install: socket
+install: ircdk
 ifeq ($(UNAME), $(filter $(UNAME) Darwin,FreeBSD))
 	@echo "[in] $< -> /usr/local/bin/$<"
 	@mkdir -p /usr/local/bin
@@ -26,4 +26,4 @@ else
 endif
 
 clean: 
-	@rm -f socket
+	@rm -f ircdk
