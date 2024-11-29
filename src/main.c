@@ -1,7 +1,7 @@
 /*
  * ircdk 1.0
  * by stx3plus1
-*/
+ */
 
 #include <stdio.h>
 #include <fcntl.h>
@@ -19,7 +19,7 @@
 #include <netinet/in.h>
 
 #define VERSION 1.0
-#define buf_size 512
+#define buf_size 2048
 
 typedef struct {
     char** buffer;
@@ -60,7 +60,7 @@ void buffer_add(scrollbuffer* scrlbuf, char* line) {
     }
 }
 
-void show_buffer(scrollbuffer* scrlbuf, char* user) {
+void show_buffer(scrollbuffer* scrlbuf, char* user, char* msg) {
     printf("\ec");
     fflush(stdout);
     int start = scrlbuf->head;
@@ -68,7 +68,8 @@ void show_buffer(scrollbuffer* scrlbuf, char* user) {
         int index = (start + i) % scrlbuf->size;
         if (scrlbuf->buffer[index][0] != '\0') printf("%s\n", scrlbuf->buffer[index]);
     }
-    printf("[%s] ", user);
+    printf("[%s] %s", user, msg);
+    if (*msg == '\0') printf("\e[sType your message...\e[u");
     fflush(stdout);
 }
 
@@ -126,7 +127,7 @@ int main(int ac, char** av) {
     scrollbuffer display_buffer;
     buffer_init(&display_buffer, w, h);
 
-    // Remove blocking.
+    // Remove all automatic terminal interaction.
     struct termios term;
     tcgetattr(STDIN_FILENO, &term);
     term.c_lflag &= ~(ICANON | ECHO);
@@ -135,60 +136,97 @@ int main(int ac, char** av) {
     int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
     fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 
+    // The socket should not be blocking either.
+    flags = fcntl(sockfd, F_GETFL, 0);
+    fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+
     // Start handling the now active IRC connection
     int i = 0;
-    char c;
+    char c = 0;
+    memset(out_buffer, 0, sizeof(out_buffer));
     while (alive) {
-        // handles printing messages
-        if (read(sockfd, in_buffer, sizeof(in_buffer))) perror("read()");
-        // message sending without a prefix
-        if (strstr(in_buffer, "JOIN :")) {
-            joined_channel = 1;
-            char* dup = strdup(in_buffer);
-            char* tok = strtok(dup, "JOIN :");
-            tok = strtok(NULL, "JOIN :");
-            memset(channel, 0, sizeof(channel));
-            strncpy(channel, tok, strlen(tok) - 1);
-        }
-        // auto pong when server sends a PING, also hides PING request
-        if (strstr(in_buffer, "PING")) {
-            char* tok = strtok(in_buffer, " ");
-            tok = strtok(NULL, " ");
-            char* pong = malloc(sizeof(in_buffer));
-            sprintf(pong, "PONG %s\r\n", tok);
-            send(sockfd, pong, strlen(pong), 0);
-            free(pong);
-        } else {
-            buffer_add(&display_buffer, in_buffer);
-        }
-        memset(in_buffer, 0, sizeof(in_buffer));
-        show_buffer(&display_buffer, av[3]);
-
-        // handles sending messages
-        if (read(0, &c, 1) > 0) out_buffer[i++] = c;
-        if (c == '\n') {
-            c = 0; i = 0;
-            if (out_buffer[0] == '/') {
-                out_buffer[0] = ' ';
-            } else {
-                if (joined_channel) {
-                    char tmp_out[buf_size];
-                    memcpy(tmp_out, out_buffer, sizeof(tmp_out));
-                    snprintf(out_buffer, sizeof(out_buffer), "PRIVMSG %s :%s", channel, tmp_out);
-                    // Add the user's sent message to the buffer.
-                    char msg[buf_size + 3];
-                    snprintf(msg, sizeof(msg), "[%s] %s", av[3], tmp_out);
-                    buffer_add(&display_buffer, msg);
-                    show_buffer(&display_buffer, av[3]);
-                } else {
-                    if (alive) buffer_add(&display_buffer, "Join a channel to chat. To run commands, prefix / to the command.\n");
+         // handles sending messages
+        if (read(0, &c, 1) > 0) {
+            if (c == '\n') {
+                putchar('\n');
+                out_buffer[i++] = '\0';
+                c = -1; i = 0;
+                if (out_buffer[0] == '/') {
+                    out_buffer[0] = ' ';
+                } else if (out_buffer[0] == '\0') {
+                    buffer_add(&display_buffer, "Type text to send a message.");
+                    show_buffer(&display_buffer, av[3], out_buffer);
                     continue;
+                } else {
+                    if (joined_channel) {
+                        char tmp_out[buf_size];
+                        char msg_out[buf_size];
+                        sprintf(msg_out, "[%s] %s", av[3], out_buffer);
+                        buffer_add(&display_buffer, msg_out);
+
+                        memcpy(tmp_out, out_buffer, sizeof(tmp_out));
+                        snprintf(out_buffer, sizeof(out_buffer), "PRIVMSG %s :%s", channel, tmp_out);
+                        memset(tmp_out, 0, buf_size);
+
+                        show_buffer(&display_buffer, av[3], "");
+                    } else {
+                        if (alive) buffer_add(&display_buffer, "Join a channel to chat. To run commands, prefix / to the command.\n");
+                        show_buffer(&display_buffer, av[3], out_buffer);
+                        continue;
+                    }
                 }
+                // Send the packet, if it is command or message.
+                strncat(out_buffer, "\r\n\0", 3);
+                send(sockfd, out_buffer, strlen(out_buffer), 0);
+                memset(out_buffer, 0, sizeof(out_buffer));
+            } else if (c == '\b' || c == 127) {
+                if (i > 1) {
+                    out_buffer[i--] = '\0';
+                    printf("\b \b\e[2D");
+                    fflush(stdout);
+                }
+                show_buffer(&display_buffer, av[3], out_buffer);
+            }    
+            else {
+                out_buffer[i++] = c;
+                show_buffer(&display_buffer, av[3], out_buffer);
             }
-            // Send the packet, if it is command or message.
-            strncat(out_buffer, "\r\n\0", 3);
-            send(sockfd, out_buffer, strlen(out_buffer), 0);
-            memset(out_buffer, 0, sizeof(out_buffer));
+        }
+
+        // handles printing messages
+        if (read(sockfd, in_buffer, sizeof(in_buffer)) > 0) {
+            char* dup = strdup(in_buffer);
+            // message sending without a prefix
+            if (strstr(in_buffer, "JOIN :")) {
+                joined_channel = 1;
+                char* tok = strtok(dup, "JOIN :");
+                tok = strtok(NULL, "JOIN :");
+                memset(channel, 0, sizeof(channel));
+                strncpy(channel, tok, strlen(tok) - 1);
+            }
+            // Format messages from other users
+            if (strstr(in_buffer, "PRIVMSG")) {
+                char* message = strtok(in_buffer, ":");
+                message = strtok(NULL, ":");
+                char* tok = strtok(dup, "!");
+                *tok++;
+                char* msg_buf = malloc(sizeof(tok) + sizeof(in_buffer));
+                sprintf(msg_buf, "[%s] %s", tok, message);
+                buffer_add(&display_buffer, msg_buf);
+                free(msg_buf);
+            } else if (strstr(in_buffer, "PING")) {
+                // auto pong when server sends a PING, also hides PING request
+                char* tok = strtok(in_buffer, " ");
+                tok = strtok(NULL, " ");
+                char* pong = malloc(sizeof(in_buffer));
+                sprintf(pong, "PONG %s\r\n", tok);
+                send(sockfd, pong, strlen(pong), 0);
+                free(pong);
+            } else {
+                buffer_add(&display_buffer, in_buffer);
+            }
+            memset(in_buffer, 0, sizeof(in_buffer));
+            show_buffer(&display_buffer, av[3], out_buffer);
         }
     }
     if (sockfd) close(sockfd);
