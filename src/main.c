@@ -19,7 +19,7 @@
 #include <netinet/in.h>
 
 #define VERSION 1.0
-#define buf_size 2048
+#define buf_size 512
 
 typedef struct {
     char** buffer;
@@ -60,7 +60,7 @@ void buffer_add(scrollbuffer* scrlbuf, char* line) {
     }
 }
 
-void show_buffer(scrollbuffer* scrlbuf, char* user, char* msg) {
+void show_buffer(scrollbuffer* scrlbuf, char* user, char* msg, int i) {
     printf("\ec");
     fflush(stdout);
     int start = scrlbuf->head;
@@ -68,8 +68,8 @@ void show_buffer(scrollbuffer* scrlbuf, char* user, char* msg) {
         int index = (start + i) % scrlbuf->size;
         if (scrlbuf->buffer[index][0] != '\0') printf("%s\n", scrlbuf->buffer[index]);
     }
-    printf("[%s] %s", user, msg);
-    if (*msg == '\0') printf("\e[sType your message...\e[u");
+    printf("[%s] ", user);
+    if (*msg == '\0') printf("\e[sType your message...\e[u"); else fwrite(msg, i, 1, stdout);
     fflush(stdout);
 }
 
@@ -84,7 +84,7 @@ int irc_connect(char* host, int port) {
     sockaddr_in.sin_family = AF_INET;
     sockaddr_in.sin_port = htons(port);
     if (connect(sockfd, (struct sockaddr*)&sockaddr_in, sizeof(sockaddr_in))) {
-        perror("connect()");
+        perror("connect");
         return 0;
     } else {
         return sockfd;
@@ -113,10 +113,6 @@ int main(int ac, char** av) {
     // network buffers
     char in_buffer[buf_size];
     char out_buffer[buf_size + 64];
-    // Initiate our IRC connection
-    memset(out_buffer, 0, sizeof(out_buffer));
-    sprintf(out_buffer, "NICK %s\r\nUSER %s 0 * : %s\r\n", av[3], av[3], av[3]);
-    send(sockfd, out_buffer, strlen(out_buffer), 0);
 
     // information.
     int alive = 1;
@@ -127,7 +123,7 @@ int main(int ac, char** av) {
     scrollbuffer display_buffer;
     buffer_init(&display_buffer, w, h);
 
-    // Remove all automatic terminal interaction.
+    // Remove terminal echo
     struct termios term;
     tcgetattr(STDIN_FILENO, &term);
     term.c_lflag &= ~(ICANON | ECHO);
@@ -139,6 +135,11 @@ int main(int ac, char** av) {
     // The socket should not be blocking either.
     flags = fcntl(sockfd, F_GETFL, 0);
     fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+
+    // Initiate our IRC connection
+    memset(out_buffer, 0, sizeof(out_buffer));
+    sprintf(out_buffer, "NICK %s\r\nUSER %s 0 * : %s\r\n", av[3], av[3], av[3]);
+    send(sockfd, out_buffer, strlen(out_buffer), 0);
 
     // Start handling the now active IRC connection
     int i = 0;
@@ -155,7 +156,7 @@ int main(int ac, char** av) {
                     out_buffer[0] = ' ';
                 } else if (out_buffer[0] == '\0') {
                     buffer_add(&display_buffer, "Type text to send a message.");
-                    show_buffer(&display_buffer, av[3], out_buffer);
+                    show_buffer(&display_buffer, av[3], out_buffer, i);
                     continue;
                 } else {
                     if (joined_channel) {
@@ -168,10 +169,10 @@ int main(int ac, char** av) {
                         snprintf(out_buffer, sizeof(out_buffer), "PRIVMSG %s :%s", channel, tmp_out);
                         memset(tmp_out, 0, buf_size);
 
-                        show_buffer(&display_buffer, av[3], "");
+                        show_buffer(&display_buffer, av[3], "", 0);
                     } else {
                         if (alive) buffer_add(&display_buffer, "Join a channel to chat. To run commands, prefix / to the command.\n");
-                        show_buffer(&display_buffer, av[3], out_buffer);
+                        show_buffer(&display_buffer, av[3], out_buffer, 0);
                         continue;
                     }
                 }
@@ -180,20 +181,24 @@ int main(int ac, char** av) {
                 send(sockfd, out_buffer, strlen(out_buffer), 0);
                 memset(out_buffer, 0, sizeof(out_buffer));
             } else if (c == '\b' || c == 127) {
-                if (i > 1) {
-                    out_buffer[i--] = '\0';
-                    printf("\b \b\e[2D");
+                if (i > 0) {
+                    i--;
+                    printf("\b \b");
                     fflush(stdout);
                 }
-                show_buffer(&display_buffer, av[3], out_buffer);
-            }    
+                show_buffer(&display_buffer, av[3], out_buffer, i);
+            } else if (c == 27) {
+                printf("\n%s left\n", av[3]);
+                alive = 0;
+                break;
+            }
             else {
                 out_buffer[i++] = c;
-                show_buffer(&display_buffer, av[3], out_buffer);
+                show_buffer(&display_buffer, av[3], out_buffer, i);
             }
         }
 
-        // handles printing messages
+        // handles printing messages   
         if (read(sockfd, in_buffer, sizeof(in_buffer)) > 0) {
             char* dup = strdup(in_buffer);
             // message sending without a prefix
@@ -204,8 +209,8 @@ int main(int ac, char** av) {
                 memset(channel, 0, sizeof(channel));
                 strncpy(channel, tok, strlen(tok) - 1);
             }
-            // Format messages from other users
             if (strstr(in_buffer, "PRIVMSG")) {
+                // Format messages from other users
                 char* message = strtok(in_buffer, ":");
                 message = strtok(NULL, ":");
                 char* tok = strtok(dup, "!");
@@ -222,14 +227,29 @@ int main(int ac, char** av) {
                 sprintf(pong, "PONG %s\r\n", tok);
                 send(sockfd, pong, strlen(pong), 0);
                 free(pong);
+            } else if (strstr(in_buffer, ":Closing link")) {
+                printf("%s left\n", av[3]);
+                alive = 0;
+                break;
+            } else if (strstr(in_buffer, "QUIT")) {
+                char* tok = strtok(in_buffer, "!");
+                *tok++;
+                char* left = malloc(sizeof(in_buffer));
+                sprintf(left, "%s left", tok);
+                buffer_add(&display_buffer, left);
+                free(left);
             } else {
                 buffer_add(&display_buffer, in_buffer);
             }
             memset(in_buffer, 0, sizeof(in_buffer));
-            show_buffer(&display_buffer, av[3], out_buffer);
+            show_buffer(&display_buffer, av[3], out_buffer, i);
         }
     }
     if (sockfd) close(sockfd);
     buffer_destroy(&display_buffer);
+
+    tcgetattr(STDIN_FILENO, &term);
+    term.c_lflag |= (ECHO | ICANON);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &term);
     return 0;
 }
