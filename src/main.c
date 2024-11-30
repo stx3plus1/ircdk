@@ -18,62 +18,16 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+#include "include/scrlbuf.h"
+
 #define VERSION 1.0
+
+#ifndef buf_size
 #define buf_size 512
-
-typedef struct {
-    char** buffer;
-    int size, len, head;
-} scrollbuffer;
-
-void buffer_init(scrollbuffer* scrlbuf, int term_w, int term_h) {
-    scrlbuf->size = term_h - 1;
-    scrlbuf->len = term_w;
-    scrlbuf->head = 0;
-    scrlbuf->buffer = malloc(sizeof(char*) * scrlbuf->size);
-    for (int i = 0; i < scrlbuf->size; i++) {
-        scrlbuf->buffer[i] = malloc(sizeof(char) * term_w);
-        memset(scrlbuf->buffer[i], 1, term_w);
-    }
-}
-
-void buffer_destroy(scrollbuffer* scrlbuf) {
-    for (int i = 0; i < scrlbuf->size; i++) {
-        free(scrlbuf->buffer[i]);
-    }
-    free(scrlbuf->buffer);
-}
-
-void buffer_add(scrollbuffer* scrlbuf, char* line) {
-    char* start = line;
-    char buffer[buf_size];
-
-    while (*start != '\0') {
-        int i = 0;
-        while (*start != '\n' && *start != '\0' && i < buf_size - 1) buffer[i++] = *start++;
-        buffer[i] = '\0';
-        if (buffer[0] != '\0') {
-            strncpy(scrlbuf->buffer[scrlbuf->head], buffer, scrlbuf->len);
-            scrlbuf->head = (scrlbuf->head + 1) % scrlbuf->size;
-        }
-        if (*start == '\n') start++;
-    }
-}
-
-void show_buffer(scrollbuffer* scrlbuf, char* user, char* msg, int i) {
-    printf("\ec");
-    fflush(stdout);
-    int start = scrlbuf->head;
-    for (int i = 0; i < scrlbuf->size; i++) {
-        int index = (start + i) % scrlbuf->size;
-        if (scrlbuf->buffer[index][0] != '\0') printf("%s\n", scrlbuf->buffer[index]);
-    }
-    printf("[%s] ", user);
-    if (*msg == '\0') printf("\e[sType your message...\e[u"); else fwrite(msg, i, 1, stdout);
-    fflush(stdout);
-}
+#endif
 
 int irc_connect(char* host, int port) {
+    // Structs needed
     struct hostent* hostent;
     struct sockaddr_in sockaddr_in;
 
@@ -85,6 +39,7 @@ int irc_connect(char* host, int port) {
     sockaddr_in.sin_port = htons(port);
     if (connect(sockfd, (struct sockaddr*)&sockaddr_in, sizeof(sockaddr_in))) {
         perror("connect");
+        // I really hope that your descriptor isn't conflicting with stdin
         return 0;
     } else {
         return sockfd;
@@ -112,7 +67,7 @@ int main(int ac, char** av) {
 
     // network buffers
     char in_buffer[buf_size];
-    char out_buffer[buf_size + 64];
+    char out_buffer[buf_size + 64]; // out needs to be larger, i dont remmeber why but its to do with the message sending
 
     // information.
     int alive = 1;
@@ -156,7 +111,7 @@ int main(int ac, char** av) {
                     out_buffer[0] = ' ';
                 } else if (out_buffer[0] == '\0') {
                     buffer_add(&display_buffer, "Type text to send a message.");
-                    show_buffer(&display_buffer, av[3], out_buffer, i);
+                    buffer_show(&display_buffer, av[3], out_buffer, i);
                     continue;
                 } else {
                     if (joined_channel) {
@@ -169,10 +124,10 @@ int main(int ac, char** av) {
                         snprintf(out_buffer, sizeof(out_buffer), "PRIVMSG %s :%s", channel, tmp_out);
                         memset(tmp_out, 0, buf_size);
 
-                        show_buffer(&display_buffer, av[3], "", 0);
+                        buffer_show(&display_buffer, av[3], "", 0);
                     } else {
                         if (alive) buffer_add(&display_buffer, "Join a channel to chat. To run commands, prefix / to the command.\n");
-                        show_buffer(&display_buffer, av[3], out_buffer, 0);
+                        buffer_show(&display_buffer, av[3], out_buffer, 0);
                         continue;
                     }
                 }
@@ -186,7 +141,7 @@ int main(int ac, char** av) {
                     printf("\b \b");
                     fflush(stdout);
                 }
-                show_buffer(&display_buffer, av[3], out_buffer, i);
+                buffer_show(&display_buffer, av[3], out_buffer, i);
             } else if (c == 27) {
                 printf("\n%s left\n", av[3]);
                 alive = 0;
@@ -194,11 +149,11 @@ int main(int ac, char** av) {
             }
             else {
                 out_buffer[i++] = c;
-                show_buffer(&display_buffer, av[3], out_buffer, i);
+                buffer_show(&display_buffer, av[3], out_buffer, i);
             }
         }
 
-        // handles printing messages   
+        // handles printing messages
         if (read(sockfd, in_buffer, sizeof(in_buffer)) > 0) {
             char* dup = strdup(in_buffer);
             // message sending without a prefix
@@ -242,7 +197,7 @@ int main(int ac, char** av) {
                 buffer_add(&display_buffer, in_buffer);
             }
             memset(in_buffer, 0, sizeof(in_buffer));
-            show_buffer(&display_buffer, av[3], out_buffer, i);
+            buffer_show(&display_buffer, av[3], out_buffer, i);
         }
     }
     if (sockfd) close(sockfd);
