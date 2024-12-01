@@ -48,6 +48,6 @@ void buffer_show(scrollbuffer* scrlbuf, char* user, char* msg, int i) {
         if (scrlbuf->buffer[index][0] != '\0') printf("%s\n", scrlbuf->buffer[index]);
     }
     printf("[%s] ", user);
-    if (*msg == '\0') printf("\e[sType your message...\e[u"); else fwrite(msg, i, 1, stdout);
+    fwrite(msg, i, 1, stdout);
     fflush(stdout);
 }

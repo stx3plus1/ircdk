@@ -193,6 +193,13 @@ int main(int ac, char** av) {
                 sprintf(left, "%s left", tok);
                 buffer_add(&display_buffer, left);
                 free(left);
+            } else if (strstr(in_buffer, "JOIN")) { 
+                char* tok = strtok(in_buffer, "!");
+                *tok++;
+                char* join = malloc(sizeof(in_buffer));
+                sprintf(join, "%s joined", tok);
+                buffer_add(&display_buffer, join);
+                free(join);
             } else {
                 buffer_add(&display_buffer, in_buffer);
             }
