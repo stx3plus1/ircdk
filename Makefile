@@ -5,14 +5,17 @@ SRC=src
 CC=cc
 SOURCE=$(wildcard src/*.c)
 COMMIT="\"$(shell git rev-parse HEAD | head -c6)\""
-CFLAGS=-O3 -std=c2x -Dcommit=$(COMMIT) 
+CFLAGS=-O3 -std=c2x -Dcommit=$(COMMIT) -lssl -lcrypto
 
 .PHONY: ircdk
 
 ircdk: ${SOURCE}
 	@echo "[$(CC)] $^ -> $@"
 	@$(CC) -o $@ $^ $(CFLAGS)
-	@strip $@
+
+unfuck: src/unfuck/unfuck.c
+	@echo "[$(CC)] $^ -> $@"
+	@$(CC) -o $@ $^ $(CFLAGS)
 
 # run install with sudo/doas.
 install: ircdk

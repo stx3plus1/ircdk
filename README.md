@@ -5,4 +5,5 @@ Minimal IRC client in C without the "fancy features".
 `make`
 `./ircdk [host] [port] [nick/user]`
 
-SSL is not supported yet. Don't even think about it.
+`./unfuck`
+Run `./unfuck` to fix your terminal echo.

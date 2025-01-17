@@ -12,7 +12,7 @@ void buffer_init(scrollbuffer* scrlbuf, int term_w, int term_h) {
     scrlbuf->buffer = malloc(sizeof(char*) * scrlbuf->size);
     for (int i = 0; i < scrlbuf->size; i++) {
         scrlbuf->buffer[i] = malloc(sizeof(char) * term_w);
-        memset(scrlbuf->buffer[i], 1, term_w);
+        memset(scrlbuf->buffer[i], ' ', term_w);
     }
 }
 

@@ -20,7 +20,7 @@
 
 #include "include/scrlbuf.h"
 
-#define VERSION 1.0
+#define VERSION "1.01"
 
 #ifndef buf_size
 #define buf_size 512
@@ -49,7 +49,7 @@ int irc_connect(char* host, int port) {
 int main(int ac, char** av) {
     // Help message
     if (ac != 4) {
-        printf("usage: %s [host] [port] [nick/user]\nircdk %.1f\nby stx3plus1.\n", av[0], VERSION);
+        printf("usage: %s [host] [port] [nick/user]\nircdk %s\nby stx3plus1.\n", av[0], VERSION);
         return 0;
     }
 
@@ -91,6 +91,8 @@ int main(int ac, char** av) {
     flags = fcntl(sockfd, F_GETFL, 0);
     fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
 
+	buffer_add(&display_buffer, "starting IRC connection...\none moment please.");
+
     // Initiate our IRC connection
     memset(out_buffer, 0, sizeof(out_buffer));
     sprintf(out_buffer, "NICK %s\r\nUSER %s 0 * : %s\r\n", av[3], av[3], av[3]);
@@ -108,6 +110,11 @@ int main(int ac, char** av) {
                 out_buffer[i++] = '\0';
                 c = -1; i = 0;
                 if (out_buffer[0] == '/') {
+					if (strstr(out_buffer, "/clear")) {
+						for (int i = 0; i < h; i++) buffer_add(&display_buffer, " ");
+						buffer_show(&display_buffer, av[3], " ", 0);
+						continue;
+					}
                     out_buffer[0] = ' ';
                 } else if (out_buffer[0] == '\0') {
                     buffer_add(&display_buffer, "Type text to send a message.");
@@ -204,7 +211,7 @@ int main(int ac, char** av) {
                 buffer_add(&display_buffer, in_buffer);
             }
             memset(in_buffer, 0, sizeof(in_buffer));
-            buffer_show(&display_buffer, av[3], out_buffer, i);
+           	buffer_show(&display_buffer, av[3], out_buffer, i);
         }
     }
     if (sockfd) close(sockfd);
